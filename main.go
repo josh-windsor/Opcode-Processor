@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"math/rand"
+	"os"
 	"runtime"
-	"strconv"
+	"sort"
 	"time"
 )
 
@@ -12,61 +14,132 @@ type channelTransaction struct {
 	opcode, order int
 }
 
-const numOpcodes = 10
-
 func main() {
-	dispatch()
+	quitChannel := make(chan bool)
+	quitCompleteChannel := make(chan bool)
+	go dispatch(quitChannel, quitCompleteChannel)
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("\nJosh Windsor (24008182) Opcode Processor")
+	fmt.Print("Press Q to quit")
+
+	reader.ReadString('\n')
+	fmt.Print("\nHalting Processor")
+	quitChannel <- true
+	<-quitCompleteChannel
+	fmt.Println("\nProcessing Complete")
 }
 
-func dispatch() {
+const (
+	opnum = 15
+)
+
+func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
+
 	inputChannel := make(chan channelTransaction)
 	outputChannel := make(chan channelTransaction)
+
 	threadsAvailable := runtime.NumCPU() - 1
-	fmt.Println("Threads Available: " + strconv.Itoa(threadsAvailable))
+	fmt.Print("\nThreads Available: ")
+	fmt.Print(threadsAvailable)
 	for i := 0; i < threadsAvailable; i++ {
 		go pipeline(inputChannel, outputChannel)
 	}
 
-	var inputArr [numOpcodes]int
-	for index := 0; index < numOpcodes; index++ {
-		inputArr[index] = rand.Intn(9)
-	}
-	var channelData [numOpcodes]channelTransaction
-	var outputArr [numOpcodes]int
-	for i := 0; i < numOpcodes; i++ {
-		channelData[i] = channelTransaction{inputArr[i], i}
-	}
-	j := 0
-	for i := 0; i < numOpcodes; {
+	inputData := []channelTransaction{}
+	outputData := []channelTransaction{}
+	outputDataUnsorted := []channelTransaction{}
+	opcodesSent := 0
+	opcodesRetired := 0
+	opcodesRecieved := 0
+	for opcodesSent < opnum {
+		randChannelData := channelTransaction{rand.Intn(9), opcodesSent}
 		select {
-		case inputChannel <- channelData[i]:
-			i++
+		case <-quitChannel:
+			break
+		case inputChannel <- randChannelData:
+			inputData = append(inputData, randChannelData)
+			opcodesSent++
 		case threadReturn := <-outputChannel:
-			fmt.Println("End1: ID:" + strconv.Itoa(threadReturn.order) + " OpCode:" + strconv.Itoa(threadReturn.opcode))
-			outputArr[threadReturn.order] = threadReturn.opcode
-			j++
+			outputData = append(outputData, threadReturn)
+			outputDataUnsorted = append(outputDataUnsorted, threadReturn)
+			sort.Slice(outputData, func(i, j int) bool {
+				return outputData[i].order < outputData[j].order
+			})
+			if opcodesRetired == outputData[opcodesRetired].order {
+				fmt.Print("\nRetired: ")
+				fmt.Print(outputData[opcodesRetired])
+				opcodesRetired++
+			}
+			opcodesRecieved++
+		}
+	}
+	//finishes off the remaining opcodes that have been processed
+	for opcodesRecieved < opcodesSent {
+		select {
+		case threadReturn := <-outputChannel:
+			outputData = append(outputData, threadReturn)
+			outputDataUnsorted = append(outputDataUnsorted, threadReturn)
+			sort.Slice(outputData, func(i, j int) bool {
+				return outputData[i].order < outputData[j].order
+			})
+			if opcodesRetired == outputData[opcodesRetired].order {
+				fmt.Print("\nRetired: ")
+				fmt.Print(outputData[opcodesRetired])
+				opcodesRetired++
+			}
+			opcodesRecieved++
 		default:
 		}
 	}
-	for j < numOpcodes {
-		select {
-		case threadReturn := <-outputChannel:
-			fmt.Println("End2: ID:" + strconv.Itoa(threadReturn.order) + " OpCode:" + strconv.Itoa(threadReturn.opcode))
-			outputArr[threadReturn.order] = threadReturn.opcode
-			j++
-		default:
+	//retires remaining opcodes
+	for opcodesRetired < opcodesRecieved {
+		fmt.Print("\nRetired: ")
+		fmt.Print(outputData[opcodesRetired])
+		opcodesRetired++
+
+	}
+	//compare arrays to check if correct output
+	matching := true
+	for i := 0; i < opcodesSent; i++ {
+		if inputData[i] != outputData[i] {
+			matching = false
 		}
 	}
-	fmt.Println(outputArr)
-	fmt.Println(inputArr)
-	fmt.Println(inputArr == outputArr)
+	fmt.Print("\nArrays Matching? : ")
+	fmt.Print(matching)
+	fmt.Print("\n")
+	formatOutput(inputData, outputData, outputDataUnsorted)
+	quitCompleteChannel <- true
 }
 
 func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction) {
 	for {
 		thread := <-inputChannel
-		fmt.Println("Start: ID:" + strconv.Itoa(thread.order) + " OpCode:" + strconv.Itoa(thread.opcode))
 		time.Sleep(time.Second * time.Duration(thread.opcode))
 		outputChannel <- thread
 	}
+}
+
+func retire(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction) {
+
+}
+
+func formatOutput(inputData []channelTransaction, outputData []channelTransaction, outputDataUnsorted []channelTransaction) {
+
+	fmt.Print("\n Input Opcodes: -")
+	for index := 0; index < len(outputData); index++ {
+		fmt.Print(inputData[index].opcode)
+		fmt.Print("-")
+	}
+	fmt.Print("\n Process Order: -")
+	for index := 0; index < len(outputData); index++ {
+		fmt.Print(outputDataUnsorted[index].opcode)
+		fmt.Print("-")
+	}
+	fmt.Print("\nOutput Opcodes: -")
+	for index := 0; index < len(outputData); index++ {
+		fmt.Print(outputData[index].opcode)
+		fmt.Print("-")
+	}
+
 }
