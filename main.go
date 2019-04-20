@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-//struct to send the opcode and its order
+//struct to send the opcode, its order & the thread id that it was processed on
 type channelTransaction struct {
 	opcode, order, pipe int
 }
@@ -107,7 +107,6 @@ OuterLoop:
 				return outputData[i].order < outputData[j].order
 			})
 			opcodesRecieved++
-
 			//if the next ordered opcode is finished then retire it and
 			//loop through any above in the array to retire
 			for opcodesRetired == outputData[opcodesRetired].order {
@@ -117,8 +116,8 @@ OuterLoop:
 					break
 				}
 			}
-			//displays the live output of threads, could be called as a goroutine
-			formatOutput(inputData, unsortedOutputData, retiredData)
+			//displays the live output of threads
+			go formatOutput(inputData, unsortedOutputData, retiredData)
 		default:
 		}
 	}
@@ -141,7 +140,7 @@ OuterLoop:
 					break
 				}
 			}
-			formatOutput(inputData, unsortedOutputData, retiredData)
+			go formatOutput(inputData, unsortedOutputData, retiredData)
 		default:
 		}
 	}
