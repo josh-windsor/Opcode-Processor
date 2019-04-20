@@ -12,7 +12,7 @@ import (
 
 //struct to send the opcode and its order
 type channelTransaction struct {
-	opcode, order int
+	opcode, order, pipe int
 }
 
 func main() {
@@ -30,19 +30,22 @@ func main() {
 	reader.ReadString('\n')
 
 	//stops the program
-	fmt.Print("\nHalting Processor")
+	fmt.Print("\nProcessing Status: Halting")
 	//sends quit to main thread to process & retire remaining opcodes
 	quitChannel <- true
 	//waits for the quit to complete before ending the main thread
 	<-quitCompleteChannel
-	fmt.Println("\nProcessing Complete")
+	fmt.Println("\nProcessing Status: Complete")
 }
 
 const (
 	//how long to loop for debug purposes
-	opnum = 10000
+	opnum = 15
 )
 
+//main dispatch thread
+//@Param quitChannel - input channel from main thread to stop running
+//@Param quitCompleteChannel - output channel to main when running has stopped
 func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
 	//creates an input & output channel for the pipelines
 	inputChannel := make(chan channelTransaction)
@@ -53,13 +56,14 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
 	fmt.Print("\nThreads Available: ")
 	fmt.Print(threadsAvailable)
 	for i := 0; i < threadsAvailable; i++ {
-		go pipeline(inputChannel, outputChannel)
+		go pipeline(inputChannel, outputChannel, i)
 	}
 
 	//creates some arrays for comparison
 	inputData := []channelTransaction{}
 	outputData := []channelTransaction{}
-	outputDataUnsorted := []channelTransaction{}
+	unsortedOutputData := []channelTransaction{}
+	retiredData := []channelTransaction{}
 	//incrementors for processing
 	opcodesSent := 0
 	opcodesRetired := 0
@@ -70,7 +74,7 @@ OuterLoop:
 	//loops for the max number for debug (this would be inf on actual system)
 	for opcodesSent < opnum {
 		//creates a random opcode to send
-		randChannelData := channelTransaction{rand.Intn(9), opcodesSent}
+		randChannelData := channelTransaction{rand.Intn(4) + 1, opcodesSent, 0}
 		select {
 		//quits the thread and processes remaining opcodes
 		case <-quitChannel:
@@ -84,53 +88,59 @@ OuterLoop:
 		case threadReturn := <-outputChannel:
 			//stores the returned opcode for checking
 			outputData = append(outputData, threadReturn)
-			outputDataUnsorted = append(outputDataUnsorted, threadReturn)
+			//updates the pipe on the input with the thread id
+			inputData[threadReturn.order].pipe = threadReturn.pipe
+			unsortedOutputData = append(unsortedOutputData, threadReturn)
 			//sorts the array to retire in order
 			sort.Slice(outputData, func(i, j int) bool {
 				return outputData[i].order < outputData[j].order
 			})
-			//if the next ordered opcode is finished then retire it
+			//if the next ordered opcode is finished then retire it and
+			//loop through any above in the array to retire
 			for opcodesRetired == outputData[opcodesRetired].order {
-				fmt.Print("\nRetired: ")
-				fmt.Print(outputData[opcodesRetired])
+				retiredData = append(retiredData, outputData[opcodesRetired])
 				opcodesRetired++
 				if opcodesRetired == opcodesRecieved {
 					break
 				}
 			}
+			//displays the live output of threads
+			formatOutput(inputData, unsortedOutputData, retiredData)
 			opcodesRecieved++
 		default:
 		}
 	}
 
-	//finishes off the remaining opcodes that have been processed
+	//finishes off the remaining opcodes that have been processed (see comments above)
 	for opcodesRecieved < opcodesSent {
 		select {
 		case threadReturn := <-outputChannel:
 			outputData = append(outputData, threadReturn)
-			outputDataUnsorted = append(outputDataUnsorted, threadReturn)
+			unsortedOutputData = append(unsortedOutputData, threadReturn)
 			sort.Slice(outputData, func(i, j int) bool {
 				return outputData[i].order < outputData[j].order
 			})
 			for opcodesRetired == outputData[opcodesRetired].order {
-				fmt.Print("\nRetired: ")
-				fmt.Print(outputData[opcodesRetired])
+				retiredData = append(retiredData, outputData[opcodesRetired])
 				opcodesRetired++
 				if opcodesRetired == opcodesRecieved {
 					break
 				}
 			}
+			formatOutput(inputData, unsortedOutputData, retiredData)
 			opcodesRecieved++
 		default:
 		}
 	}
+
 	//retires remaining opcodes
 	for opcodesRetired < opcodesRecieved {
-		fmt.Print("\nRetired: ")
-		fmt.Print(outputData[opcodesRetired])
+		retiredData = append(retiredData, outputData[opcodesRetired])
+		//not calling as goroutine as needs to display final output
+		formatOutput(inputData, unsortedOutputData, retiredData)
 		opcodesRetired++
-
 	}
+
 	//compare arrays to check if correct output
 	matching := true
 	for i := 0; i < opcodesSent; i++ {
@@ -138,40 +148,57 @@ OuterLoop:
 			matching = false
 		}
 	}
-	fmt.Print("\nArrays Matching? : ")
+	fmt.Print("\n\n Arrays Matching?: ")
 	fmt.Print(matching)
 	fmt.Print("\n")
-	formatOutput(inputData, outputData, outputDataUnsorted)
+
+	//returns back to main thread to quit
 	quitCompleteChannel <- true
 }
 
-func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction) {
+//main execution thread
+//@Param inputChannel - input channel from dispatch with next opcode
+//@Param outputChannel - output channel to dispatch with completed opcode
+func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction, pipeNum int) {
 	for {
+		//waits for a new piece of data
 		thread := <-inputChannel
-		fmt.Print("\nStarted: ")
-		fmt.Print(thread)
+		thread.pipe = pipeNum
+		//sleeps for the opcode duration
 		time.Sleep(time.Second * time.Duration(thread.opcode))
-		fmt.Print("\n  Ended: ")
-		fmt.Print(thread)
+		//returns the completed data
 		outputChannel <- thread
 	}
 }
 
-func formatOutput(inputData []channelTransaction, outputData []channelTransaction, outputDataUnsorted []channelTransaction) {
-
-	fmt.Print("\n Input Opcodes: -")
-	for index := 0; index < len(outputData); index++ {
+//formatting output to console
+//@Param inputData - the opcodes in order of their start
+//@Param outputData - the opcodes in order of their processing completion
+//@Param retiredData - the opcodes in order of their retirement
+func formatOutput(inputData []channelTransaction, outputData []channelTransaction, retiredData []channelTransaction) {
+	fmt.Print("\n\n\n    Input Opcodes: -")
+	for index := 0; index < len(inputData); index++ {
 		fmt.Print(inputData[index].opcode)
 		fmt.Print("-")
 	}
-	fmt.Print("\n Process Order: -")
-	for index := 0; index < len(outputData); index++ {
-		fmt.Print(outputDataUnsorted[index].opcode)
+	fmt.Print("\n    Used Pipeline: -")
+	for index := 0; index < len(inputData); index++ {
+		fmt.Print(inputData[index].pipe)
 		fmt.Print("-")
 	}
-	fmt.Print("\nOutput Opcodes: -")
+	fmt.Print("\n\nProcessed Opcodes: -")
 	for index := 0; index < len(outputData); index++ {
 		fmt.Print(outputData[index].opcode)
+		fmt.Print("-")
+	}
+	fmt.Print("\n    Used Pipeline: -")
+	for index := 0; index < len(outputData); index++ {
+		fmt.Print(outputData[index].pipe)
+		fmt.Print("-")
+	}
+	fmt.Print("\n\n  Retired Opcodes: -")
+	for index := 0; index < len(retiredData); index++ {
+		fmt.Print(retiredData[index].opcode)
 		fmt.Print("-")
 	}
 
