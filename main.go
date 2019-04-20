@@ -29,14 +29,17 @@ func main() {
 
 	fmt.Print("\nJosh Windsor (24008182) Opcode Processor")
 	fmt.Print("\nPress q to quit")
-	const input = ""
-	scanner := bufio.NewScanner(os.Stdin)
+
 	//creates a reader to wait for an input
+	scanner := bufio.NewScanner(os.Stdin)
 MainLoop:
+	//waits for key entry
 	for scanner.Scan() {
+		//if the key is q then quit
 		if scanner.Text() == "q" {
 			fmt.Print("\nProcessing Status: Halting")
 			quitChannel <- true
+			//wait for quit to complete before breaking
 			<-quitCompleteChannel
 			break MainLoop
 		}
@@ -53,6 +56,7 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	//creates an input & output channel for the pipelines
 	inputChannel := make(chan channelTransaction)
 	outputChannel := make(chan channelTransaction)
+	//creates bool channel to exit out the threads
 	threadExitChannel := make(chan bool)
 
 	//spawns the number of threads for the processor minus main & this thread
@@ -72,6 +76,7 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	opcodesSent := 0
 	opcodesRetired := 0
 	opcodesRecieved := 0
+	//var to skip wait for q to shutdown
 	hardQuit := false
 	//tag for quit out break
 OuterLoop:
@@ -112,7 +117,7 @@ OuterLoop:
 					break
 				}
 			}
-			//displays the live output of threads
+			//displays the live output of threads, could be called as a goroutine
 			formatOutput(inputData, unsortedOutputData, retiredData)
 		default:
 		}
@@ -161,19 +166,21 @@ OuterLoop:
 	fmt.Print("\n")
 	fmt.Print("\nProcessing Status: Opcodes Complete")
 
-	//returns back to main thread to quit
-
+	//stops all the threads
 	threadExitChannel <- true
+	//checks if user already pressed q
 	if !hardQuit {
 		fmt.Print("\nPress q to quit")
 	QuitLoop:
 		for {
+			//waits for quit key to shutdown
 			select {
 			case <-quitChannel:
 				break QuitLoop
 			}
 		}
 	}
+	//returns completion channel to shut down main thread
 	quitCompleteChannel <- true
 
 }
@@ -181,14 +188,19 @@ OuterLoop:
 //main execution thread
 //@Param inputChannel - input channel from dispatch with next opcode
 //@Param outputChannel - output channel to dispatch with completed opcode
+//@Param threadExitChannel - channel to halt the thread
+//@Param pipeNum - the thread's Id for reporting
 func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction, threadExitChannel <-chan bool, pipeNum int) {
+	//Label to exit loop on completion
 ThreadLoop:
 	for {
 		select {
+		//if called to exit, jump out of label
 		case <-threadExitChannel:
 			break ThreadLoop
 		//waits for a new piece of data
 		case thread := <-inputChannel:
+			//stores the id for display on completion
 			thread.pipe = pipeNum
 			//sleeps for the opcode duration
 			time.Sleep(time.Second * time.Duration(thread.opcode))
