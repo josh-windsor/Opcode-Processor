@@ -53,13 +53,14 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	//creates an input & output channel for the pipelines
 	inputChannel := make(chan channelTransaction)
 	outputChannel := make(chan channelTransaction)
+	threadExitChannel := make(chan bool)
 
 	//spawns the number of threads for the processor minus main & this thread
 	threadsAvailable := runtime.NumCPU() - 2
 	fmt.Print("\nThreads Available: ")
 	fmt.Print(threadsAvailable)
 	for i := 0; i < threadsAvailable; i++ {
-		go pipeline(inputChannel, outputChannel, i)
+		go pipeline(inputChannel, outputChannel, threadExitChannel, i)
 	}
 
 	//creates some arrays for comparison
@@ -71,7 +72,7 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	opcodesSent := 0
 	opcodesRetired := 0
 	opcodesRecieved := 0
-
+	hardQuit := false
 	//tag for quit out break
 OuterLoop:
 	//loops for the max number for debug (this would be inf on actual system)
@@ -81,6 +82,7 @@ OuterLoop:
 		select {
 		//quits the thread and processes remaining opcodes
 		case <-quitChannel:
+			hardQuit = true
 			break OuterLoop
 		//sends the new opcode to a waiting thread
 		case inputChannel <- randChannelData:
@@ -158,24 +160,41 @@ OuterLoop:
 	fmt.Print(matching)
 	fmt.Print("\n")
 	fmt.Print("\nProcessing Status: Opcodes Complete")
-	fmt.Print("\nPress q to quit")
 
 	//returns back to main thread to quit
+
+	threadExitChannel <- true
+	if !hardQuit {
+		fmt.Print("\nPress q to quit")
+	QuitLoop:
+		for {
+			select {
+			case <-quitChannel:
+				break QuitLoop
+			}
+		}
+	}
 	quitCompleteChannel <- true
+
 }
 
 //main execution thread
 //@Param inputChannel - input channel from dispatch with next opcode
 //@Param outputChannel - output channel to dispatch with completed opcode
-func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction, pipeNum int) {
+func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction, threadExitChannel <-chan bool, pipeNum int) {
+ThreadLoop:
 	for {
+		select {
+		case <-threadExitChannel:
+			break ThreadLoop
 		//waits for a new piece of data
-		thread := <-inputChannel
-		thread.pipe = pipeNum
-		//sleeps for the opcode duration
-		time.Sleep(time.Second * time.Duration(thread.opcode))
-		//returns the completed data
-		outputChannel <- thread
+		case thread := <-inputChannel:
+			thread.pipe = pipeNum
+			//sleeps for the opcode duration
+			time.Sleep(time.Second * time.Duration(thread.opcode))
+			//returns the completed data
+			outputChannel <- thread
+		}
 	}
 }
 
