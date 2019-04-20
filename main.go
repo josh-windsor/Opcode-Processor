@@ -15,6 +15,11 @@ type channelTransaction struct {
 	opcode, order, pipe int
 }
 
+const (
+	//how long to loop for debug purposes
+	opnum = 15
+)
+
 func main() {
 	//create unidirectional quit and quit callback channels
 	quitChannel := make(chan bool)
@@ -23,30 +28,28 @@ func main() {
 	go dispatch(quitChannel, quitCompleteChannel)
 
 	fmt.Print("\nJosh Windsor (24008182) Opcode Processor")
-	fmt.Print("\nPress any key to quit")
-
+	fmt.Print("\nPress q to quit")
+	const input = ""
+	scanner := bufio.NewScanner(os.Stdin)
 	//creates a reader to wait for an input
-	reader := bufio.NewReader(os.Stdin)
-	reader.ReadString('\n')
+MainLoop:
+	for scanner.Scan() {
+		if scanner.Text() == "q" {
+			fmt.Print("\nProcessing Status: Halting")
+			quitChannel <- true
+			<-quitCompleteChannel
+			break MainLoop
+		}
+	}
 
-	//stops the program
-	fmt.Print("\nProcessing Status: Halting")
-	//sends quit to main thread to process & retire remaining opcodes
-	quitChannel <- true
-	//waits for the quit to complete before ending the main thread
-	<-quitCompleteChannel
-	fmt.Println("\nProcessing Status: Complete")
+	fmt.Print("\nProcessing Status: Complete")
+
 }
-
-const (
-	//how long to loop for debug purposes
-	opnum = 15
-)
 
 //main dispatch thread
 //@Param quitChannel - input channel from main thread to stop running
 //@Param quitCompleteChannel - output channel to main when running has stopped
-func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
+func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	//creates an input & output channel for the pipelines
 	inputChannel := make(chan channelTransaction)
 	outputChannel := make(chan channelTransaction)
@@ -90,11 +93,14 @@ OuterLoop:
 			outputData = append(outputData, threadReturn)
 			//updates the pipe on the input with the thread id
 			inputData[threadReturn.order].pipe = threadReturn.pipe
+			//stored to show execution order
 			unsortedOutputData = append(unsortedOutputData, threadReturn)
 			//sorts the array to retire in order
 			sort.Slice(outputData, func(i, j int) bool {
 				return outputData[i].order < outputData[j].order
 			})
+			opcodesRecieved++
+
 			//if the next ordered opcode is finished then retire it and
 			//loop through any above in the array to retire
 			for opcodesRetired == outputData[opcodesRetired].order {
@@ -106,7 +112,6 @@ OuterLoop:
 			}
 			//displays the live output of threads
 			formatOutput(inputData, unsortedOutputData, retiredData)
-			opcodesRecieved++
 		default:
 		}
 	}
@@ -116,10 +121,12 @@ OuterLoop:
 		select {
 		case threadReturn := <-outputChannel:
 			outputData = append(outputData, threadReturn)
+			inputData[threadReturn.order].pipe = threadReturn.pipe
 			unsortedOutputData = append(unsortedOutputData, threadReturn)
 			sort.Slice(outputData, func(i, j int) bool {
 				return outputData[i].order < outputData[j].order
 			})
+			opcodesRecieved++
 			for opcodesRetired == outputData[opcodesRetired].order {
 				retiredData = append(retiredData, outputData[opcodesRetired])
 				opcodesRetired++
@@ -128,7 +135,6 @@ OuterLoop:
 				}
 			}
 			formatOutput(inputData, unsortedOutputData, retiredData)
-			opcodesRecieved++
 		default:
 		}
 	}
@@ -144,13 +150,15 @@ OuterLoop:
 	//compare arrays to check if correct output
 	matching := true
 	for i := 0; i < opcodesSent; i++ {
-		if inputData[i] != outputData[i] {
+		if inputData[i] != retiredData[i] {
 			matching = false
 		}
 	}
 	fmt.Print("\n\n Arrays Matching?: ")
 	fmt.Print(matching)
 	fmt.Print("\n")
+	fmt.Print("\nProcessing Status: Opcodes Complete")
+	fmt.Print("\nPress q to quit")
 
 	//returns back to main thread to quit
 	quitCompleteChannel <- true
