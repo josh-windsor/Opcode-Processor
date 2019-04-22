@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -140,7 +141,8 @@ OuterLoop:
 					break
 				}
 			}
-			go formatOutput(inputData, unsortedOutputData, retiredData)
+			//not calling as goroutine as needs to display final output
+			formatOutput(inputData, unsortedOutputData, retiredData)
 		default:
 		}
 	}
@@ -166,9 +168,14 @@ OuterLoop:
 	fmt.Print("\nProcessing Status: Opcodes Complete")
 
 	//stops all the threads
-	threadExitChannel <- true
+	for index := 0; index < threadsAvailable; index++ {
+		threadExitChannel <- true
+	}
+
 	//checks if user already pressed q
 	if !hardQuit {
+		//wait to display q for threads to finish
+		time.Sleep(time.Millisecond * 100)
 		fmt.Print("\nPress q to quit")
 	QuitLoop:
 		for {
@@ -190,6 +197,7 @@ OuterLoop:
 //@Param threadExitChannel - channel to halt the thread
 //@Param pipeNum - the thread's Id for reporting
 func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction, threadExitChannel <-chan bool, pipeNum int) {
+	fmt.Print("\n    Thread Status: Thread " + strconv.Itoa(pipeNum) + " Starting")
 	//Label to exit loop on completion
 ThreadLoop:
 	for {
@@ -207,6 +215,7 @@ ThreadLoop:
 			outputChannel <- thread
 		}
 	}
+	fmt.Print("\n    Thread Status: Thread " + strconv.Itoa(pipeNum) + " Ended")
 }
 
 //formatting output to console
@@ -239,5 +248,4 @@ func formatOutput(inputData []channelTransaction, outputData []channelTransactio
 		fmt.Print(retiredData[index].opcode)
 		fmt.Print("-")
 	}
-
 }
