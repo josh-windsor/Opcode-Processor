@@ -39,13 +39,13 @@ MainLoop:
 	for scanner.Scan() {
 		//if the key is q then quit
 		if scanner.Text() == "q" {
-			fmt.Print("\nProcessing Status: Halting")
 			quitChannel <- true
 			//wait for quit to complete before breaking
 			<-quitCompleteChannel
 			break MainLoop
 		}
 	}
+	time.Sleep(time.Millisecond * 100)
 	fmt.Print("\nProcessing Status: Complete")
 }
 
@@ -126,7 +126,7 @@ OuterLoop:
 			}
 			//displays the live output of threads, could be in go routine but due to console clearing
 			//needs to be concurrent or might clear output data
-			formatOutput(inputData, unsortedOutputData, retiredData)
+			formatOutput(inputData, unsortedOutputData, retiredData, false)
 		default:
 		}
 	}
@@ -149,7 +149,7 @@ OuterLoop:
 					break
 				}
 			}
-			formatOutput(inputData, unsortedOutputData, retiredData)
+			formatOutput(inputData, unsortedOutputData, retiredData, true)
 		default:
 		}
 	}
@@ -158,7 +158,7 @@ OuterLoop:
 	for opcodesRetired < opcodesRecieved {
 		retiredData = append(retiredData, outputData[opcodesRetired])
 		//not calling as goroutine as needs to display final output
-		formatOutput(inputData, unsortedOutputData, retiredData)
+		formatOutput(inputData, unsortedOutputData, retiredData, true)
 		opcodesRetired++
 	}
 
@@ -229,7 +229,7 @@ ThreadLoop:
 //@Param inputData - the opcodes in order of their start
 //@Param outputData - the opcodes in order of their processing completion
 //@Param retiredData - the opcodes in order of their retirement
-func formatOutput(inputData []channelTransaction, outputData []channelTransaction, retiredData []channelTransaction) {
+func formatOutput(inputData []channelTransaction, outputData []channelTransaction, retiredData []channelTransaction, halting bool) {
 	//Uses console commands to clear the console
 	cmd := exec.Command("cmd", "/C", "cls")
 	cmd.Stdout = os.Stdout
@@ -261,4 +261,10 @@ func formatOutput(inputData []channelTransaction, outputData []channelTransactio
 		fmt.Print(retiredData[index].opcode)
 		fmt.Print("-")
 	}
+
+	//displays to the user that the remaining codes are being finished
+	if halting {
+		fmt.Print("\nProcessing Status: Halting")
+	}
+
 }
