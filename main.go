@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"runtime"
 	"sort"
 	"strconv"
@@ -29,7 +30,7 @@ func main() {
 	go dispatch(quitChannel, quitCompleteChannel)
 
 	fmt.Print("\nJosh Windsor (24008182) Opcode Processor")
-	fmt.Print("\nPress q to quit")
+	fmt.Print("\n  Press q to quit: ")
 
 	//creates a reader to wait for an input
 	scanner := bufio.NewScanner(os.Stdin)
@@ -45,15 +46,13 @@ MainLoop:
 			break MainLoop
 		}
 	}
-
 	fmt.Print("\nProcessing Status: Complete")
-
 }
 
 //main dispatch thread
 //@Param quitChannel - input channel from main thread to stop running
 //@Param quitCompleteChannel - output channel to main when running has stopped
-func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
+func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
 	//creates an input & output channel for the pipelines
 	inputChannel := make(chan channelTransaction)
 	outputChannel := make(chan channelTransaction)
@@ -85,6 +84,7 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	//tag for quit out break
 OuterLoop:
 	//loops for the max number for debug (this would be inf on actual system)
+	//Seperate go routines could be used for the generation & retiring of opcodes
 	for opcodesSent < opnum {
 		if generateOpcode {
 			//creates a random opcode to send
@@ -124,8 +124,9 @@ OuterLoop:
 					break
 				}
 			}
-			//displays the live output of threads
-			go formatOutput(inputData, unsortedOutputData, retiredData)
+			//displays the live output of threads, could be in go routine but due to console clearing
+			//needs to be concurrent or might clear output data
+			formatOutput(inputData, unsortedOutputData, retiredData)
 		default:
 		}
 	}
@@ -148,7 +149,6 @@ OuterLoop:
 					break
 				}
 			}
-			//not calling as goroutine as needs to display final output
 			formatOutput(inputData, unsortedOutputData, retiredData)
 		default:
 		}
@@ -183,7 +183,7 @@ OuterLoop:
 	if !hardQuit {
 		//wait to display q for threads to finish
 		time.Sleep(time.Millisecond * 100)
-		fmt.Print("\nPress q to quit")
+		fmt.Print("\n  Press q to quit: ")
 	QuitLoop:
 		for {
 			//waits for quit key to shutdown
@@ -204,7 +204,7 @@ OuterLoop:
 //@Param threadExitChannel - channel to halt the thread
 //@Param pipeNum - the thread's Id for reporting
 func pipeline(inputChannel <-chan channelTransaction, outputChannel chan<- channelTransaction, threadExitChannel <-chan bool, pipeNum int) {
-	fmt.Print("\n    Thread Status: Thread " + strconv.Itoa(pipeNum) + " Starting")
+	fmt.Print("\n  Thread " + strconv.Itoa(pipeNum) + " Status: Started")
 	//Label to exit loop on completion
 ThreadLoop:
 	for {
@@ -222,7 +222,7 @@ ThreadLoop:
 			outputChannel <- thread
 		}
 	}
-	fmt.Print("\n    Thread Status: Thread " + strconv.Itoa(pipeNum) + " Ended")
+	fmt.Print("\n  Thread " + strconv.Itoa(pipeNum) + " Status: Ended")
 }
 
 //formatting output to console
@@ -230,7 +230,13 @@ ThreadLoop:
 //@Param outputData - the opcodes in order of their processing completion
 //@Param retiredData - the opcodes in order of their retirement
 func formatOutput(inputData []channelTransaction, outputData []channelTransaction, retiredData []channelTransaction) {
-	fmt.Print("\n\n\n    Input Opcodes: -")
+	//Uses console commands to clear the console
+	cmd := exec.Command("cmd", "/C", "cls")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+
+	//displays all the lists in the correct format
+	fmt.Print("    Input Opcodes: -")
 	for index := 0; index < len(inputData); index++ {
 		fmt.Print(inputData[index].opcode)
 		fmt.Print("-")
