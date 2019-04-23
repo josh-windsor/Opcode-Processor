@@ -62,8 +62,7 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 
 	//spawns the number of threads for the processor minus main & this thread
 	threadsAvailable := runtime.NumCPU() - 2
-	fmt.Print("\nThreads Available: ")
-	fmt.Print(threadsAvailable)
+	fmt.Print("\nThreads Available: " + strconv.Itoa(threadsAvailable))
 	for i := 0; i < threadsAvailable; i++ {
 		go pipeline(inputChannel, outputChannel, threadExitChannel, i)
 	}
@@ -79,12 +78,19 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan bool) {
 	opcodesRecieved := 0
 	//var to skip wait for q to shutdown
 	hardQuit := false
+	//bool to generate new instruction
+	generateOpcode := true
+	//next opcode to use
+	randChannelData := channelTransaction{}
 	//tag for quit out break
 OuterLoop:
 	//loops for the max number for debug (this would be inf on actual system)
 	for opcodesSent < opnum {
-		//creates a random opcode to send
-		randChannelData := channelTransaction{rand.Intn(4) + 1, opcodesSent, 0}
+		if generateOpcode {
+			//creates a random opcode to send
+			randChannelData = channelTransaction{rand.Intn(5) + 1, opcodesSent, 0}
+			generateOpcode = false
+		}
 		select {
 		//quits the thread and processes remaining opcodes
 		case <-quitChannel:
@@ -95,6 +101,7 @@ OuterLoop:
 			//stores the sent opcode for checking later
 			inputData = append(inputData, randChannelData)
 			opcodesSent++
+			generateOpcode = true
 		//listens for return from a pipeline to retire
 		case threadReturn := <-outputChannel:
 			//stores the returned opcode for checking
