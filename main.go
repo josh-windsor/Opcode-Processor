@@ -19,8 +19,19 @@ type channelTransaction struct {
 
 const (
 	//how long to loop for debug purposes
-	opnum = 15
+	opnum = 10000
 )
+
+//creates some arrays for comparison
+var inputData = []channelTransaction{}
+var outputData = []channelTransaction{}
+var unsortedOutputData = []channelTransaction{}
+var retiredData = []channelTransaction{}
+
+//incrementors for processing
+var opcodesSent = 0
+var opcodesRetired = 0
+var opcodesRecieved = 0
 
 func main() {
 	//create unidirectional quit and quit callback channels
@@ -53,9 +64,9 @@ MainLoop:
 //@Param quitChannel - input channel from main thread to stop running
 //@Param quitCompleteChannel - output channel to main when running has stopped
 func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
-	//creates an input & output channel for the pipelines
-	inputChannel := make(chan channelTransaction)
-	outputChannel := make(chan channelTransaction)
+	//creates an input & output channel arrays for the pipelines
+	inputChannels := []chan channelTransaction{}
+	outputChannels := []chan channelTransaction{}
 	//creates bool channel to exit out the threads
 	threadExitChannel := make(chan bool)
 
@@ -63,18 +74,18 @@ func dispatch(quitChannel <-chan bool, quitCompleteChannel chan<- bool) {
 	threadsAvailable := runtime.NumCPU() - 2
 	fmt.Print("\nThreads Available: " + strconv.Itoa(threadsAvailable))
 	for i := 0; i < threadsAvailable; i++ {
-		go pipeline(inputChannel, outputChannel, threadExitChannel, i)
+		//creates new channels for each thread
+		newInputChan := make(chan channelTransaction)
+		newOutputChan := make(chan channelTransaction)
+		inputChannels = append(inputChannels, newInputChan)
+		outputChannels = append(outputChannels, newOutputChan)
+		go pipeline(newInputChan, newOutputChan, threadExitChannel, i)
 	}
 
-	//creates some arrays for comparison
-	inputData := []channelTransaction{}
-	outputData := []channelTransaction{}
-	unsortedOutputData := []channelTransaction{}
-	retiredData := []channelTransaction{}
-	//incrementors for processing
-	opcodesSent := 0
-	opcodesRetired := 0
-	opcodesRecieved := 0
+	retireExitChannel := make(chan bool)
+	go retire(outputChannels, retireExitChannel, threadsAvailable)
+
+	var threadIterator = 0
 	//var to skip wait for q to shutdown
 	hardQuit := false
 	//bool to generate new instruction
@@ -94,85 +105,22 @@ OuterLoop:
 		select {
 		//quits the thread and processes remaining opcodes
 		case <-quitChannel:
+			retireExitChannel <- true
 			hardQuit = true
 			break OuterLoop
 		//sends the new opcode to a waiting thread
-		case inputChannel <- randChannelData:
+		case inputChannels[threadIterator] <- randChannelData:
 			//stores the sent opcode for checking later
 			inputData = append(inputData, randChannelData)
 			opcodesSent++
 			generateOpcode = true
-		//listens for return from a pipeline to retire
-		case threadReturn := <-outputChannel:
-			//stores the returned opcode for checking
-			outputData = append(outputData, threadReturn)
-			//updates the pipe on the input with the thread id
-			inputData[threadReturn.order].pipe = threadReturn.pipe
-			//stored to show execution order
-			unsortedOutputData = append(unsortedOutputData, threadReturn)
-			//sorts the array to retire in order
-			sort.Slice(outputData, func(i, j int) bool {
-				return outputData[i].order < outputData[j].order
-			})
-			opcodesRecieved++
-			//if the next ordered opcode is finished then retire it and
-			//loop through any above in the array to retire
-			for opcodesRetired == outputData[opcodesRetired].order {
-				retiredData = append(retiredData, outputData[opcodesRetired])
-				opcodesRetired++
-				if opcodesRetired == opcodesRecieved {
-					break
-				}
-			}
-			//displays the live output of threads, could be in go routine but due to console clearing
-			//needs to be concurrent or might clear output data
-			formatOutput(inputData, unsortedOutputData, retiredData, false)
 		default:
-		}
-	}
-
-	//finishes off the remaining opcodes that have been processed (see comments above)
-	for opcodesRecieved < opcodesSent {
-		select {
-		case threadReturn := <-outputChannel:
-			outputData = append(outputData, threadReturn)
-			inputData[threadReturn.order].pipe = threadReturn.pipe
-			unsortedOutputData = append(unsortedOutputData, threadReturn)
-			sort.Slice(outputData, func(i, j int) bool {
-				return outputData[i].order < outputData[j].order
-			})
-			opcodesRecieved++
-			for opcodesRetired == outputData[opcodesRetired].order {
-				retiredData = append(retiredData, outputData[opcodesRetired])
-				opcodesRetired++
-				if opcodesRetired == opcodesRecieved {
-					break
-				}
+			threadIterator++
+			if threadIterator == threadsAvailable {
+				threadIterator = 0
 			}
-			formatOutput(inputData, unsortedOutputData, retiredData, true)
-		default:
 		}
 	}
-
-	//retires remaining opcodes
-	for opcodesRetired < opcodesRecieved {
-		retiredData = append(retiredData, outputData[opcodesRetired])
-		//not calling as goroutine as needs to display final output
-		formatOutput(inputData, unsortedOutputData, retiredData, true)
-		opcodesRetired++
-	}
-
-	//compare arrays to check if correct output
-	matching := true
-	for i := 0; i < opcodesSent; i++ {
-		if inputData[i] != retiredData[i] {
-			matching = false
-		}
-	}
-	fmt.Print("\n\n Arrays Matching?: ")
-	fmt.Print(matching)
-	fmt.Print("\n")
-	fmt.Print("\nProcessing Status: Opcodes Complete")
 
 	//stops all the threads
 	for index := 0; index < threadsAvailable; index++ {
@@ -195,7 +143,6 @@ OuterLoop:
 	}
 	//returns completion channel to shut down main thread
 	quitCompleteChannel <- true
-
 }
 
 //main execution thread
@@ -223,6 +170,69 @@ ThreadLoop:
 		}
 	}
 	fmt.Print("\n  Thread " + strconv.Itoa(pipeNum) + " Status: Ended")
+}
+
+//retire & display thread
+//@Param outputChannel - output channel from pipeline with completed opcode
+//@Param retireExitChannel - channel to halt the thread
+//@Param threadsAvailable - num threads to increment thread iterator
+func retire(outputChannel []chan channelTransaction, retireExitChannel <-chan bool, threadsAvailable int) {
+	threadIterator := 0
+	exitBool := false
+RetireExit:
+	for {
+		select {
+		//if called to exit, jump out of label
+		case <-retireExitChannel:
+			exitBool = true
+		//waits for a new piece of data
+		case threadReturn := <-outputChannel[threadIterator]:
+			//stores the returned opcode for checking
+			outputData = append(outputData, threadReturn)
+			//updates the pipe on the input with the thread id
+			inputData[threadReturn.order].pipe = threadReturn.pipe
+			//stored to show execution order
+			unsortedOutputData = append(unsortedOutputData, threadReturn)
+			//sorts the array to retire in order
+			sort.Slice(outputData, func(i, j int) bool {
+				return outputData[i].order < outputData[j].order
+			})
+			opcodesRecieved++
+			//if the next ordered opcode is finished then retire it and
+			//loop through any above in the array to retire
+			for opcodesRetired == outputData[opcodesRetired].order {
+				retiredData = append(retiredData, outputData[opcodesRetired])
+				opcodesRetired++
+				if opcodesRetired == opcodesRecieved {
+					break
+				}
+			}
+			//displays the live output of threads, could be in go routine but due to console clearing
+			//needs to be concurrent or might clear output data
+			formatOutput(inputData, unsortedOutputData, retiredData, exitBool)
+
+			if exitBool && opcodesRetired == opcodesRecieved {
+				break RetireExit
+			}
+		default:
+			threadIterator++
+			if threadIterator == threadsAvailable {
+				threadIterator = 0
+			}
+		}
+	}
+	//compare arrays to check if correct output
+	matching := true
+	for i := 0; i < opcodesSent; i++ {
+		if inputData[i] != retiredData[i] {
+			matching = false
+		}
+	}
+	fmt.Print("\n\n Arrays Matching?: ")
+	fmt.Print(matching)
+	fmt.Print("\n")
+	fmt.Print("\nProcessing Status: Opcodes Complete")
+
 }
 
 //formatting output to console
@@ -266,5 +276,4 @@ func formatOutput(inputData []channelTransaction, outputData []channelTransactio
 	if halting {
 		fmt.Print("\nProcessing Status: Halting")
 	}
-
 }
